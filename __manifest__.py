@@ -15,7 +15,10 @@
     # de stock en el backend.
     # ============================================================
     "assets": {
-        "point_of_sale._assets_pos": [],
+        "point_of_sale._assets_pos": [
+            "pos_stock_control/static/src/js/pos_stock_warning.js",
+            "pos_stock_control/static/src/xml/offer_sale_button.xml",
+        ],
     },
     "installable": True,
     "application": False,

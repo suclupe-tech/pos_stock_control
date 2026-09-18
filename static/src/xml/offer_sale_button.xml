@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<templates id="template" xml:space="preserve">
+
+    <!-- =========================================================
+         BOTÓN VENTA EN OFERTA
+         Se muestra en los controles principales del POS.
+         ========================================================= -->
+
+    <t t-name="pos_stock_control.OfferSaleButton"
+       t-inherit="point_of_sale.ControlButtons"
+       t-inherit-mode="extension">
+
+        <!-- Insertar antes del botón de más acciones (...) -->
+        <xpath expr="//button[contains(@class, 'more-btn')]" position="before">
+
+            <button
+                t-if="!props.showRemainingButtons"
+                class="btn btn-lg border-0 text-truncate"
+                t-att-class="{
+                    'btn-success': currentOrder?.getSelectedOrderline()?.is_offer_sale,
+                    'btn-secondary': !currentOrder?.getSelectedOrderline()?.is_offer_sale
+                }"
+                t-on-click="() => this.toggleOfferSale()">
+
+                <i class="fa fa-tag me-1"/>
+
+                <t t-if="currentOrder?.getSelectedOrderline()?.is_offer_sale">
+                    Oferta ✓
+                </t>
+
+                <t t-else="">
+                    Oferta
+                </t>
+
+            </button>
+
+        </xpath>
+
+    </t>
+
+</templates>
