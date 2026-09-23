@@ -24,6 +24,35 @@ class PosOrder(models.Model):
     )
 
     # ============================================================
+    # MODO COMERCIAL DE LA VENTA
+    #
+    # Se utiliza principalmente en almacenes MIXTOS.
+    #
+    # variant:
+    # Venta unitaria. El stock se controla por talla/color.
+    #
+    # model:
+    # Venta mayorista. El stock se controla agrupado por modelo.
+    #
+    # En almacenes configurados únicamente como MODEL o VARIANT
+    # este campo puede permanecer vacío, porque el almacén ya
+    # determina automáticamente su forma de trabajo.
+    # ============================================================
+
+    commercial_operation_mode = fields.Selection(
+        [
+            ("variant", "Venta unitaria"),
+            ("model", "Venta mayorista"),
+        ],
+        string="Modo de venta",
+        copy=False,
+        help=(
+            "Indica cómo debe controlar el stock una venta realizada "
+            "desde un almacén configurado en modo mixto."
+        ),
+    )
+
+    # ============================================================
     # OBTENER Y BLOQUEAR ASIGNACIÓN DE OFERTA
     #
     # FOR UPDATE evita que dos ventas simultáneas consuman
@@ -98,6 +127,60 @@ class PosOrder(models.Model):
         return False
 
     # ============================================================
+    # PRODUCTO DE STOCK PARA VENTA POR MODELO
+    #
+    # En un almacén MIXTO:
+    #
+    # - Venta unitaria:
+    #   utiliza la variante real seleccionada.
+    #
+    # - Venta mayorista:
+    #   utiliza la variante técnica SIN CLASIFICAR del modelo.
+    #
+    # La variante técnica ya es gestionada por dt_catalogo_comercial.
+    # ============================================================
+
+    def _get_model_stock_product(self, product):
+        self.ensure_one()
+
+        if not product:
+            return product
+
+        Product = self.env["product.product"]
+
+        # --------------------------------------------------------
+        # Validar que esté disponible la funcionalidad de
+        # stock SIN CLASIFICAR.
+        # --------------------------------------------------------
+        if "is_unclassified_variant" not in Product._fields:
+            raise UserError(
+                _("No está disponible la configuración de stock " "SIN CLASIFICAR.")
+            )
+
+        template = product.product_tmpl_id
+
+        # --------------------------------------------------------
+        # Buscar la única variante técnica activa del modelo.
+        # --------------------------------------------------------
+        unclassified_variant = template.with_context(
+            active_test=False
+        ).product_variant_ids.filtered(
+            lambda variant: (variant.active and variant.is_unclassified_variant)
+        )
+
+        if len(unclassified_variant) != 1:
+            raise UserError(
+                _(
+                    "El producto %(product)s debe tener exactamente "
+                    "una variante técnica SIN CLASIFICAR para realizar "
+                    "una venta mayorista.",
+                    product=template.display_name,
+                )
+            )
+
+        return unclassified_variant
+
+    # ============================================================
     # VALIDACIÓN DE STOCK
     #
     # Devuelve también las asignaciones de oferta que deberán
@@ -149,7 +232,30 @@ class PosOrder(models.Model):
             if qty <= 0:
                 continue
 
-            qty_by_product[product.id] += qty
+            # ====================================================
+            # PRODUCTO FÍSICO QUE DEBE VALIDARSE
+            #
+            # TDA DIGITAL / almacén MIXTO:
+            #
+            # UNIDAD:
+            #   valida la variante real seleccionada.
+            #
+            # MAYORISTA:
+            #   valida exclusivamente la variante técnica
+            #   SIN CLASIFICAR del modelo.
+            # ====================================================
+
+            is_mixed_wholesale = (
+                warehouse.product_control_mode == "mixed"
+                and self.commercial_operation_mode == "model"
+            )
+
+            if is_mixed_wholesale:
+                stock_product = self._get_model_stock_product(product)
+            else:
+                stock_product = product
+
+            qty_by_product[stock_product.id] += qty
 
             template_id = product.product_tmpl_id.id
 
@@ -452,3 +558,48 @@ class PosOrderLine(models.Model):
             fields_to_load.append("is_offer_sale")
 
         return fields_to_load
+
+    # ============================================================
+    # MOVIMIENTOS DE STOCK PARA VENTA POR MODELO
+    #
+    # En una venta Mayorista la línea visible del POS conserva
+    # el producto/modelo seleccionado por el vendedor, pero el
+    # movimiento físico utiliza la variante técnica SIN CLASIFICAR.
+    #
+    # Esta relación permite que Odoo encuentre el movimiento real
+    # para calcular correctamente el costo de la línea.
+    # ============================================================
+
+    def _get_stock_moves_to_consider(self, stock_moves, product):
+        self.ensure_one()
+
+        # --------------------------------------------------------
+        # Venta Mayorista normal.
+        # --------------------------------------------------------
+        is_model_sale = self.order_id.commercial_operation_mode == "model"
+
+        # --------------------------------------------------------
+        # Devolución de una venta Mayorista.
+        #
+        # La orden de devolución podría no conservar explícitamente
+        # el modo comercial, por eso verificamos la línea original.
+        # --------------------------------------------------------
+        is_model_refund = (
+            self.refunded_orderline_id
+            and self.refunded_orderline_id.order_id.commercial_operation_mode == "model"
+        )
+
+        if is_model_sale or is_model_refund:
+
+            model_moves = stock_moves.filtered(
+                lambda move: move.pos_model_order_line_id == self
+            )
+
+            if model_moves:
+                return model_moves
+
+        # Unidad, Oferta y demás ventas continúan usando Odoo estándar.
+        return super()._get_stock_moves_to_consider(
+            stock_moves,
+            product,
+        )

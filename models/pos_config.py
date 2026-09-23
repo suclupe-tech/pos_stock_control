@@ -5,6 +5,23 @@ from odoo import api, fields, models
 
 class PosConfig(models.Model):
     _inherit = "pos.config"
+    # ============================================================
+    # MODO DE CONTROL DE STOCK DEL ALMACÉN DEL POS
+    #
+    # Permite que el frontend conozca si el almacén trabaja:
+    # - por modelo
+    # - por variante
+    # - en modo mixto
+    #
+    # Es solo informativo para el POS; la configuración real
+    # continúa perteneciendo al almacén.
+    # ============================================================
+
+    warehouse_product_control_mode = fields.Selection(
+        related="picking_type_id.warehouse_id.product_control_mode",
+        string="Modo de control de stock",
+        readonly=True,
+    )
 
     # ============================================================
     # INFORMACIÓN COMERCIAL DE OFERTA PARA EL POS
@@ -127,3 +144,29 @@ class PosConfig(models.Model):
             "warehouse_name": warehouse.display_name,
             "product_name": product.display_name,
         }
+
+    # ============================================================
+    # SELECTOR UNIDAD / MAYORISTA
+    #
+    # Permite decidir por cada Punto de Venta si el cajero podrá
+    # elegir entre venta por variante y venta por modelo.
+    #
+    # Ejemplos actuales:
+    # - TDA DIGITAL: activado
+    # - HUANUCO: desactivado
+    # - GAMARRA: desactivado
+    # - MONARCA: desactivado
+    #
+    # Si otra tienda empieza a trabajar por variantes en el futuro,
+    # bastará habilitar esta opción y configurar su almacén.
+    # ============================================================
+
+    enable_commercial_mode_selector = fields.Boolean(
+        string="Habilitar Unidad / Mayorista",
+        default=False,
+        help=(
+            "Muestra en el Punto de Venta el selector para alternar "
+            "entre venta unitaria por variantes y venta mayorista "
+            "por modelo."
+        ),
+    )

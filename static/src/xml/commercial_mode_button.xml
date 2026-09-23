@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<templates id="template" xml:space="preserve">
+
+    <!-- =========================================================
+         SELECTOR DE MODO DE VENTA
+
+         Solo aparece cuando el almacén del POS trabaja
+         en modo MIXTO.
+
+         variant = Venta unitaria
+         model   = Venta mayorista
+         ========================================================= -->
+
+    <t t-name="pos_stock_control.CommercialModeButton"
+       t-inherit="point_of_sale.ControlButtons"
+       t-inherit-mode="extension">
+
+        <!-- =========================================================
+            OCULTAR BOTÓN NOTA
+            No se utiliza en la operación de las tiendas.
+            ========================================================= -->
+
+        <xpath expr="//InternalNoteButton" position="replace"/>
+
+        <xpath expr="//button[contains(@class, 'more-btn')]" position="before">
+
+            <button
+                t-if="
+                    !props.showRemainingButtons
+                    and pos.config.enable_commercial_mode_selector
+                    and pos.config.warehouse_product_control_mode === 'mixed'
+                "
+                class="btn btn-lg border-0 text-truncate"
+                t-att-class="{
+                    'btn-primary': currentOrder?.commercial_operation_mode === 'model',
+                    'btn-secondary': currentOrder?.commercial_operation_mode !== 'model'
+                }"
+                t-on-click="() => this.toggleCommercialOperationMode()">
+
+                <i class="fa fa-exchange me-1"/>
+
+                <t t-if="currentOrder?.commercial_operation_mode === 'model'">
+                    <span style="font-size: 0.95rem;">Mayorista</span>
+                </t>
+
+                <t t-else="">
+                    <span style="font-size: 0.95rem;">Unidad</span>
+                </t>
+
+            </button>
+
+        </xpath>
+
+    </t>
+
+    <t t-name="pos_stock_control.OrderlineModelMode"
+        t-inherit="point_of_sale.Orderline"
+        t-inherit-mode="extension">
+
+            <!--
+                En Venta Mayorista se trabaja por modelo.
+                No mostramos talla/color porque puede confundir al vendedor.
+                En Venta Unitaria se mantiene el comportamiento normal de Odoo.
+            -->
+            <xpath expr="//small[contains(@class, 'attribute-line')]"
+                position="attributes">
+                <attribute name="t-if">
+                    vals.attributeString and line.order_id.commercial_operation_mode != 'model'
+                </attribute>
+            </xpath>
+
+    </t>
+
+</templates>

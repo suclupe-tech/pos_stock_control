@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- =========================================================
+         CONFIGURACIÓN DEL PUNTO DE VENTA
+
+         Permite habilitar por cada POS el selector:
+         Unidad / Mayorista.
+         ========================================================= -->
+
+    <record id="pos_config_view_form_commercial_mode" model="ir.ui.view">
+        <field name="name">pos.config.form.commercial.mode</field>
+        <field name="model">pos.config</field>
+
+        <field name="inherit_id"
+               ref="point_of_sale.pos_config_view_form"/>
+
+        <field name="arch" type="xml">
+
+            <xpath expr="//page[@name='configuration']/div[contains(@class, 'o_settings_container')]"
+                   position="inside">
+
+                <setting
+                    id="commercial_mode_selector"
+                    string="Unidad / Mayorista"
+                    help="Permite al cajero alternar entre venta unitaria por variantes y venta mayorista por modelo.">
+
+                    <field name="enable_commercial_mode_selector"/>
+
+                </setting>
+
+            </xpath>
+
+        </field>
+    </record>
+
+</odoo>
