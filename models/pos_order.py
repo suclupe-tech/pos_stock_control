@@ -168,17 +168,42 @@ class PosOrder(models.Model):
             lambda variant: (variant.active and variant.is_unclassified_variant)
         )
 
-        if len(unclassified_variant) != 1:
-            raise UserError(
-                _(
-                    "El producto %(product)s debe tener exactamente "
-                    "una variante técnica SIN CLASIFICAR para realizar "
-                    "una venta mayorista.",
-                    product=template.display_name,
-                )
-            )
+        # ============================================================
+        # PRODUCTO YA MIGRADO
+        #
+        # Si existe exactamente una variante técnica,
+        # esa es la que representa el stock por modelo.
+        # ============================================================
+        if len(unclassified_variant) == 1:
+            return unclassified_variant
 
-        return unclassified_variant
+        # ============================================================
+        # COMPATIBILIDAD CON PRODUCTOS ANTIGUOS
+        #
+        # Un producto que todavía no fue migrado y solamente tiene
+        # una variante activa puede continuar vendiéndose temporalmente.
+        # ============================================================
+        active_variants = template.with_context(
+            active_test=False
+        ).product_variant_ids.filtered(lambda variant: variant.active)
+
+        if not unclassified_variant and len(active_variants) == 1:
+            return active_variants
+
+        # ============================================================
+        # PRODUCTO CON VARIANTES PERO SIN STOCK POR MODELO HABILITADO
+        #
+        # No podemos elegir una talla/color arbitrariamente.
+        # Debe habilitarse primero su variante SIN CLASIFICAR.
+        # ============================================================
+        raise UserError(
+            _(
+                "El producto %(product)s tiene varias variantes pero no "
+                "cuenta con una única variante técnica SIN CLASIFICAR.\n\n"
+                "Primero utilice 'Habilitar stock por modelo' en el producto.",
+                product=template.display_name,
+            )
+        )
 
     # ============================================================
     # VALIDACIÓN DE STOCK
@@ -233,24 +258,25 @@ class PosOrder(models.Model):
                 continue
 
             # ====================================================
-            # PRODUCTO FÍSICO QUE DEBE VALIDARSE
+            # DETERMINAR SI ESTA OPERACIÓN TRABAJA POR MODELO
             #
-            # TDA DIGITAL / almacén MIXTO:
+            # Almacén MODEL:
+            #   siempre utiliza stock SIN CLASIFICAR.
             #
-            # UNIDAD:
-            #   valida la variante real seleccionada.
+            # Almacén MIXED:
+            #   solo utiliza SIN CLASIFICAR cuando la venta
+            #   está marcada como Mayorista / Por modelo.
             #
-            # MAYORISTA:
-            #   valida exclusivamente la variante técnica
-            #   SIN CLASIFICAR del modelo.
+            # Almacén VARIANT:
+            #   utiliza la variante real seleccionada.
             # ====================================================
 
-            is_mixed_wholesale = (
+            is_model_operation = warehouse.product_control_mode == "model" or (
                 warehouse.product_control_mode == "mixed"
                 and self.commercial_operation_mode == "model"
             )
 
-            if is_mixed_wholesale:
+            if is_model_operation:
                 stock_product = self._get_model_stock_product(product)
             else:
                 stock_product = product

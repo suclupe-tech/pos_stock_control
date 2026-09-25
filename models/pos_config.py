@@ -146,6 +146,132 @@ class PosConfig(models.Model):
         }
 
     # ============================================================
+    # STOCK DISPONIBLE PARA VENTA POS
+    #
+    # Consulta el producto físico que realmente utiliza el POS:
+    #
+    # MODEL:
+    #   variante técnica SIN CLASIFICAR.
+    #
+    # MIXED + Mayorista:
+    #   variante técnica SIN CLASIFICAR.
+    #
+    # MIXED + Unidad / VARIANT:
+    #   variante real seleccionada.
+    #
+    # Este método se utiliza para advertir al vendedor antes
+    # de agregar o aumentar una cantidad en el carrito.
+    # ============================================================
+
+    @api.model
+    def get_pos_sale_stock_info(
+        self,
+        config_id,
+        product_id,
+        operation_mode=False,
+    ):
+        config = self.browse(config_id).exists()
+        product = self.env["product.product"].browse(product_id).exists()
+
+        if not config or not product:
+            return {
+                "available": False,
+                "message": "No se pudo identificar el POS o el producto.",
+            }
+
+        picking_type = config.picking_type_id
+        warehouse = picking_type.warehouse_id if picking_type else False
+        location = picking_type.default_location_src_id if picking_type else False
+
+        if not warehouse or not location:
+            return {
+                "available": False,
+                "message": (
+                    "El Punto de Venta no tiene almacén "
+                    "o ubicación de stock configurada."
+                ),
+            }
+
+        # Los productos que no manejan existencias
+        # no necesitan esta validación.
+        if not product.is_storable:
+            return {
+                "available": True,
+                "track_stock": False,
+                "available_qty": 0.0,
+                "product_name": product.display_name,
+            }
+
+        control_mode = (
+            warehouse.product_control_mode
+            if "product_control_mode" in warehouse._fields
+            else False
+        )
+
+        is_model_operation = control_mode == "model" or (
+            control_mode == "mixed" and operation_mode == "model"
+        )
+
+        stock_product = product
+
+        # ========================================================
+        # OPERACIÓN POR MODELO
+        # ========================================================
+        if is_model_operation:
+
+            template = product.product_tmpl_id
+
+            technical_variants = template.with_context(
+                active_test=False
+            ).product_variant_ids.filtered(
+                lambda variant: (variant.active and variant.is_unclassified_variant)
+            )
+
+            # Producto ya migrado.
+            if len(technical_variants) == 1:
+                stock_product = technical_variants
+
+            else:
+                active_variants = template.with_context(
+                    active_test=False
+                ).product_variant_ids.filtered(lambda variant: variant.active)
+
+                # Compatibilidad temporal con producto antiguo
+                # que todavía posee una sola variante.
+                if not technical_variants and len(active_variants) == 1:
+                    stock_product = active_variants
+
+                else:
+                    return {
+                        "available": False,
+                        "message": (
+                            f"El producto {template.display_name} "
+                            "no está preparado para trabajar por modelo. "
+                            "Primero habilite su stock por modelo."
+                        ),
+                    }
+
+        # ========================================================
+        # STOCK REAL DISPONIBLE
+        # ========================================================
+        available_qty = (
+            self.env["stock.quant"]
+            .sudo()
+            ._get_available_quantity(
+                stock_product,
+                location,
+            )
+        )
+
+        return {
+            "available": available_qty > 0,
+            "track_stock": True,
+            "available_qty": available_qty,
+            "product_name": product.product_tmpl_id.display_name,
+            "warehouse_name": warehouse.display_name,
+        }
+
+    # ============================================================
     # SELECTOR UNIDAD / MAYORISTA
     #
     # Permite decidir por cada Punto de Venta si el cajero podrá

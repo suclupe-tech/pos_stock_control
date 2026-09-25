@@ -56,16 +56,27 @@ class StockPicking(models.Model):
         warehouse = self.picking_type_id.warehouse_id
 
         # --------------------------------------------------------
-        # Si el picking no pertenece a un almacén MIXTO,
-        # mantenemos completamente el comportamiento estándar.
+        # MODO DE CONTROL DEL ALMACÉN
+        #
+        # MODEL:
+        #   todas las salidas físicas trabajan por modelo.
+        #
+        # MIXED:
+        #   solo las ventas Mayorista trabajan por modelo.
+        #
+        # Otros modos:
+        #   conservan completamente el comportamiento estándar.
         # --------------------------------------------------------
-        is_mixed_warehouse = (
-            warehouse
-            and "product_control_mode" in warehouse._fields
-            and warehouse.product_control_mode == "mixed"
+        control_mode = (
+            warehouse.product_control_mode
+            if warehouse and "product_control_mode" in warehouse._fields
+            else False
         )
 
-        if not is_mixed_warehouse:
+        is_model_warehouse = control_mode == "model"
+        is_mixed_warehouse = control_mode == "mixed"
+
+        if not (is_model_warehouse or is_mixed_warehouse):
             return super()._create_move_from_pos_order_lines(lines)
 
         # --------------------------------------------------------
@@ -77,13 +88,33 @@ class StockPicking(models.Model):
         # --------------------------------------------------------
         model_lines = lines.filtered(
             lambda line: (
-                line.order_id.commercial_operation_mode == "model"
-                or (
-                    line.qty < 0
-                    and line.refunded_orderline_id
+                # ----------------------------------------------------
+                # ALMACÉN POR MODELO
+                #
+                # Todas las líneas físicas utilizan el producto
+                # técnico SIN CLASIFICAR.
+                # ----------------------------------------------------
+                is_model_warehouse
+                or
+                # ----------------------------------------------------
+                # ALMACÉN MIXTO
+                #
+                # Solo Mayorista trabaja contra SIN CLASIFICAR.
+                # También reconocemos la devolución de una venta
+                # Mayorista original.
+                # ----------------------------------------------------
+                (
+                    is_mixed_warehouse
                     and (
-                        line.refunded_orderline_id.order_id.commercial_operation_mode
-                        == "model"
+                        line.order_id.commercial_operation_mode == "model"
+                        or (
+                            line.qty < 0
+                            and line.refunded_orderline_id
+                            and (
+                                line.refunded_orderline_id.order_id.commercial_operation_mode
+                                == "model"
+                            )
+                        )
                     )
                 )
             )

@@ -184,8 +184,18 @@ patch(OrderSummary.prototype, {
         const order = this.pos.getOrder();
         const line = order?.getSelectedOrderline();
 
+        // ========================================================
+        // VALIDAR AUMENTO DE CANTIDAD
+        //
+        // Solo consultamos al servidor cuando:
+        // - estamos modificando cantidad;
+        // - existe una línea seleccionada;
+        // - la nueva cantidad es mayor que la actual.
+        //
+        // Reducir cantidades continúa funcionando normalmente.
+        // ========================================================
         if (
-            line?.is_offer_sale &&
+            line &&
             this.pos.numpadMode === "quantity" &&
             buffer !== null
         ) {
@@ -193,79 +203,170 @@ patch(OrderSummary.prototype, {
             const requestedQty = Number(buffer);
             const currentQty = Number(line.getQuantity() || 0);
 
-            // Solo necesitamos consultar nuevamente al servidor
-            // cuando el vendedor intenta aumentar la cantidad.
+            const isRefundLine =
+                Boolean(line.refunded_orderline_id) ||
+                currentQty < 0;
+
             if (
+                !isRefundLine &&
                 Number.isFinite(requestedQty) &&
                 requestedQty > currentQty
             ) {
 
+                // ====================================================
+                // 1. VALIDAR STOCK FÍSICO
+                // ====================================================
                 try {
 
-                    const offerInfo = await this.pos.data.call(
+                    const stockInfo = await this.pos.data.call(
                         "pos.config",
-                        "get_offer_sale_info",
+                        "get_pos_sale_stock_info",
                         [
                             this.pos.config.id,
                             line.product_id.id,
+                            order?.commercial_operation_mode || false,
                         ]
                     );
 
-                    // La oferta pudo agotarse, vencer o desactivarse
-                    // mientras la orden estaba abierta.
-                    if (!offerInfo.available) {
+                    // Productos que no controlan existencias
+                    // pueden continuar normalmente.
+                    if (stockInfo.track_stock !== false) {
 
-                        this.numberBuffer.reset();
+                        // --------------------------------------------
+                        // Sin stock o producto no preparado
+                        // --------------------------------------------
+                        if (!stockInfo.available) {
 
-                        this.dialog.add(AlertDialog, {
-                            title: "Oferta no disponible",
-                            body:
-                                offerInfo.message ||
-                                "Esta oferta ya no se encuentra disponible.",
-                        });
+                            this.numberBuffer.reset();
 
-                        return;
-                    }
+                            this.dialog.add(AlertDialog, {
+                                title: "Sin stock disponible",
+                                body:
+                                    stockInfo.message ||
+                                    `${stockInfo.product_name || "El producto"} ` +
+                                    "no tiene stock disponible en esta tienda.",
+                            });
 
-                    // Impedir superar el saldo reservado para oferta.
-                    if (requestedQty > offerInfo.offer_quantity) {
+                            return;
+                        }
 
-                        this.numberBuffer.reset();
+                        const availableQty =
+                            Number(stockInfo.available_qty || 0);
 
-                        this.dialog.add(AlertDialog, {
-                            title: "Stock de oferta insuficiente",
-                            body:
-                                `Está intentando vender ${requestedQty} unidad(es), ` +
-                                `pero solo hay ${offerInfo.offer_quantity} ` +
-                                `unidad(es) disponibles en oferta.`,
-                        });
+                        // --------------------------------------------
+                        // La cantidad solicitada supera el stock real
+                        // --------------------------------------------
+                        if (requestedQty > availableQty) {
 
-                        return;
+                            this.numberBuffer.reset();
+
+                            this.dialog.add(AlertDialog, {
+                                title: "Stock insuficiente",
+                                body:
+                                    `Está intentando vender ${requestedQty} unidad(es), ` +
+                                    `pero solo hay ${availableQty} unidad(es) disponibles.`,
+                            });
+
+                            return;
+                        }
                     }
 
                 } catch (error) {
 
                     console.error(
-                        "Error al validar cantidad de oferta:",
+                        "Error al validar stock físico:",
                         error
                     );
 
                     this.numberBuffer.reset();
 
                     this.dialog.add(AlertDialog, {
-                        title: "Error al validar oferta",
+                        title: "Error al validar stock",
                         body:
-                            "No se pudo comprobar el stock de oferta. " +
+                            "No se pudo comprobar el stock disponible. " +
                             "Inténtelo nuevamente.",
                     });
 
                     return;
                 }
+
+
+                // ====================================================
+                // 2. VALIDACIÓN ADICIONAL PARA VENTA EN OFERTA
+                //
+                // Además del stock físico, una oferta no puede superar
+                // la cantidad comercial reservada para esa condición.
+                // ====================================================
+                if (line.is_offer_sale) {
+
+                    try {
+
+                        const offerInfo = await this.pos.data.call(
+                            "pos.config",
+                            "get_offer_sale_info",
+                            [
+                                this.pos.config.id,
+                                line.product_id.id,
+                            ]
+                        );
+
+                        // La oferta pudo agotarse, vencer o desactivarse
+                        // mientras la orden estaba abierta.
+                        if (!offerInfo.available) {
+
+                            this.numberBuffer.reset();
+
+                            this.dialog.add(AlertDialog, {
+                                title: "Oferta no disponible",
+                                body:
+                                    offerInfo.message ||
+                                    "Esta oferta ya no se encuentra disponible.",
+                            });
+
+                            return;
+                        }
+
+                        // No permitir superar el saldo reservado
+                        // específicamente para oferta.
+                        if (requestedQty > offerInfo.offer_quantity) {
+
+                            this.numberBuffer.reset();
+
+                            this.dialog.add(AlertDialog, {
+                                title: "Stock de oferta insuficiente",
+                                body:
+                                    `Está intentando vender ${requestedQty} unidad(es), ` +
+                                    `pero solo hay ${offerInfo.offer_quantity} ` +
+                                    `unidad(es) disponibles en oferta.`,
+                            });
+
+                            return;
+                        }
+
+                    } catch (error) {
+
+                        console.error(
+                            "Error al validar cantidad de oferta:",
+                            error
+                        );
+
+                        this.numberBuffer.reset();
+
+                        this.dialog.add(AlertDialog, {
+                            title: "Error al validar oferta",
+                            body:
+                                "No se pudo comprobar el stock de oferta. " +
+                                "Inténtelo nuevamente.",
+                        });
+
+                        return;
+                    }
+                }
             }
         }
 
-        // Para líneas normales o cantidades permitidas,
-        // conservar el funcionamiento estándar de Odoo.
+        // Cantidad permitida o reducción:
+        // conservar comportamiento normal de Odoo.
         return super.updateSelectedOrderline({ buffer, key });
     },
 });
